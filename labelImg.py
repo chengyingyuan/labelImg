@@ -70,7 +70,8 @@ class WindowMixin(object):
         toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         if actions:
             addActions(toolbar, actions)
-        self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        #self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
         return toolbar
 
 
@@ -123,9 +124,16 @@ class MainWindow(QMainWindow, WindowMixin):
         self.useDefautLabelCheckbox = QCheckBox(u'Use default label')
         self.useDefautLabelCheckbox.setChecked(False)
         self.defaultLabelTextLine = QLineEdit()
+        #buttonEditDefaultLabel = QToolButton()
+        #buttonEditDefaultLabel.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        buttonEditDefaultLabel = QPushButton()
+        buttonEditDefaultLabel.setText("...")
+        buttonEditDefaultLabel.setMaximumWidth(48)
+        buttonEditDefaultLabel.clicked.connect(self.editDefaultLabel)
         useDefautLabelQHBoxLayout = QHBoxLayout()       
         useDefautLabelQHBoxLayout.addWidget(self.useDefautLabelCheckbox)
         useDefautLabelQHBoxLayout.addWidget(self.defaultLabelTextLine)
+        useDefautLabelQHBoxLayout.addWidget(buttonEditDefaultLabel)
         useDefautLabelContainer = QWidget()
         useDefautLabelContainer.setLayout(useDefautLabelQHBoxLayout)
 
@@ -213,6 +221,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
         openAnnotation = action('&Open Annotation', self.openAnnotation,
                                 'Ctrl+Shift+O', 'openAnnotation', u'Open Annotation')
+
+        loadClasses = action('&Load Classes', self.loadClasses,
+                                'Ctrl+Shift+L', 'loadClasses', u'Load classes')
 
         openNextImg = action('&Next Image', self.openNextImg,
                              'd', 'next', u'Open Next')
@@ -346,7 +357,7 @@ class MainWindow(QMainWindow, WindowMixin):
             labelList=labelMenu)
 
         addActions(self.menus.file,
-                   (open, opendir, changeSavedir, openAnnotation, self.menus.recentFiles, save, saveAs, close, None, quit))
+                   (open, opendir, changeSavedir, openAnnotation, loadClasses, self.menus.recentFiles, save, saveAs, close, None, quit))
         addActions(self.menus.help, (help,))
         addActions(self.menus.view, (
             labels, advancedMode, None,
@@ -610,10 +621,21 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.canvas.editing():
             return
         item = item if item else self.currentItem()
-        text = self.labelDialog.popUp(item.text())
+        text = self.labelDialog.popUp(item.text(), title="Edit Label")
         if text is not None:
             item.setText(text)
             self.setDirty()
+
+    def editDefaultLabel(self):
+        if not self.canvas.editing():
+            return
+        if len(self.labelHist) > 0:
+            self.labelDialog = LabelDialog(parent=self, listItem=self.labelHist)
+        text = self.labelDialog.popUp(self.defaultLabelTextLine.text(), 
+                                      move=False, 
+                                      title="Set default label")
+        if text is not None:
+            self.defaultLabelTextLine.setText(text)
 
     # Tzutalin 20160906 : Add file list and dock to move faster
     def fileitemDoubleClicked(self, item=None):
@@ -769,7 +791,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.labelDialog = LabelDialog(
                     parent=self, listItem=self.labelHist)
 
-            text = self.labelDialog.popUp(text=self.prevLabelText)
+            text = self.labelDialog.popUp(text=self.prevLabelText,title="Set shape label")
         else:
             text = self.defaultLabelTextLine.text()
 
@@ -1058,6 +1080,16 @@ class MainWindow(QMainWindow, WindowMixin):
                 if isinstance(filename, (tuple, list)):
                     filename = filename[0]
             self.loadPascalXMLByFilename(filename)
+    
+    def loadClasses(self):
+        path = os.path.dirname(ustr(self.filePath)) if self.filePath else '.'
+        filters = "Open Class file (%s)" % ' '.join(['*.txt'])
+        filename = QFileDialog.getOpenFileName(self,'%s - Choose a class file' % __appname__, path, filters)
+        if filename:
+            if isinstance(filename, (tuple, list)):
+                filename = filename[0]
+            self.labelHist = []
+            self.loadPredefinedClasses(filename)
 
     def openDir(self, _value=False):
         if not self.mayContinue():
@@ -1271,7 +1303,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 for line in f:
                     line = line.strip()
                     if self.labelHist is None:
-                        self.lablHist = [line]
+                        self.labelHist = [line]
                     else:
                         self.labelHist.append(line)
 

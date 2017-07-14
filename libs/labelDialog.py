@@ -53,7 +53,8 @@ class LabelDialog(QDialog):
             # PyQt5: AttributeError: 'str' object has no attribute 'trimmed'
             self.edit.setText(self.edit.text())
 
-    def popUp(self, text='', move=True):
+    def popUp(self, text='', move=True, title="labelImg"):
+        self.setWindowTitle(title)
         self.edit.setText(text)
         self.edit.setSelection(0, len(text))
         self.edit.setFocus(Qt.PopupFocusReason)
