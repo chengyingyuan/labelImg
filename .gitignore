@@ -20,3 +20,5 @@ cscope*
 .pydevproject
 .settings
 var
+labelImg.spec
+
