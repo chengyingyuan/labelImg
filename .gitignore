@@ -21,4 +21,5 @@ cscope*
 .settings
 var
 labelImg.spec
+config_labelImg.ini
 

@@ -41,6 +41,7 @@ from toolBar import ToolBar
 from pascal_voc_io import PascalVocReader
 from pascal_voc_io import XML_EXT
 from ustr import ustr
+import autolabel
 
 __appname__ = '图片标注'
 
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None):
         super(MainWindow, self).__init__()
+        self._autolabel = None
         self.setWindowTitle(__appname__)
         # Save as Pascal voc xml
         self.defaultSaveDir = None
@@ -100,6 +102,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dirname = None
         self.labelHist = []
         self.lastOpenDir = None
+        self.lastLabelFile = None
+        self.lastSaveDir = None
 
         # Whether we need to save or not.
         self.dirty = False
@@ -252,6 +256,8 @@ class MainWindow(QMainWindow, WindowMixin):
         editMode = action('编辑(&E)\n标注', self.setEditMode,
                           'Ctrl+J', 'edit', u'移动或编辑标注', enabled=False)
 
+        autoAnnotation = action('自动\n标注', self.loadPascalXMLByPrevFile,
+                        'a', 'auto', u'自动标注', enabled=False)
         create = action('创建\n标注', self.createShape,
                         'w', 'new', u'创建一新标注', enabled=False)
         delete = action('删除\n标注', self.deleteSelectedShape,
@@ -331,7 +337,9 @@ class MainWindow(QMainWindow, WindowMixin):
         # Store actions for further handling.
         self.actions = struct(save=save, saveAs=saveAs, open=open, close=close,
                               lineColor=color1, fillColor=color2,
-                              create=create, delete=delete, edit=edit, copy=copy,
+                              create=create, 
+                              autoAnnotation=autoAnnotation, 
+                              delete=delete, edit=edit, copy=copy,
                               createMode=createMode, editMode=editMode, advancedMode=advancedMode,
                               shapeLineColor=shapeLineColor, shapeFillColor=shapeFillColor,
                               zoom=zoom, zoomIn=zoomIn, zoomOut=zoomOut, zoomOrg=zoomOrg,
@@ -346,7 +354,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               advancedContext=(createMode, editMode, edit, copy,
                                                delete, shapeLineColor, shapeFillColor),
                               onLoadActive=(
-                                  close, create, createMode, editMode),
+                                  close, autoAnnotation, create, createMode, editMode),
                               onShapesPresent=(saveAs, hideAll, showAll))
 
         self.menus = struct(
@@ -376,7 +384,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, opendir, openNextImg, openPrevImg, verify, save, None, create, copy, delete, None,
+            open, opendir, verify, save, openPrevImg, openNextImg, None, autoAnnotation, create, copy, delete, None,
             zoomIn, zoom, zoomOut, fitWindow, fitWidth)
 
         self.actions.advanced = (
@@ -417,6 +425,8 @@ class MainWindow(QMainWindow, WindowMixin):
                 'window/state': QByteArray,
                 'savedir': QString,
                 'lastOpenDir': QString,
+                'lastSaveDir': QString,
+                'lastLabelFile': QString,
             }
         else:
             types = {
@@ -432,6 +442,8 @@ class MainWindow(QMainWindow, WindowMixin):
                 'window/state': QByteArray,
                 'savedir': str,
                 'lastOpenDir': str,
+                'lastSaveDir': str,
+                'lastLabelFile': str,
             }
 
         self.settings = settings = Settings(types)
@@ -442,11 +454,13 @@ class MainWindow(QMainWindow, WindowMixin):
         self.move(position)
         saveDir = ustr(settings.get('savedir', None))
         self.lastOpenDir = ustr(settings.get('lastOpenDir', None))
-        if saveDir is not None and os.path.exists(saveDir):
-            self.defaultSaveDir = saveDir
-            self.statusBar().showMessage('%s 启动完成。标注将会保存到  %s' %
-                                         (__appname__, self.defaultSaveDir))
-            self.statusBar().show()
+        self.lastSaveDir = ustr(settings.get('lastSaveDir', None))
+        self.lastLabelFile = ustr(settings.get('lastLabelFile', None))
+        #if saveDir is not None and os.path.exists(saveDir):
+        #    self.defaultSaveDir = saveDir
+        #    self.statusBar().showMessage('%s 启动完成。标注将会保存到  %s' %
+        #                                 (__appname__, self.defaultSaveDir))
+        #    self.statusBar().show()
 
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
@@ -971,6 +985,78 @@ class MainWindow(QMainWindow, WindowMixin):
             return True
         return False
 
+    def loadPascalXMLByPrevFile(self):
+        # Get previous image file
+        if len(self.mImgList) <= 0:
+            return
+        if self.filePath is None:
+            return
+        currIndex = self.mImgList.index(self.filePath)
+        if currIndex - 1 >= 0:
+            prevFilePath = self.mImgList[currIndex - 1]
+        else:
+            self.status("AutoAnnation doesn't work for the first file")
+            return
+        
+        # Label previous annoation file
+        if self.usingPascalVocFormat is True:
+            if self.defaultSaveDir is not None:
+                basename = os.path.basename(os.path.splitext(prevFilePath)[0]) + XML_EXT
+                xmlPath = os.path.join(self.defaultSaveDir, basename)
+            else:
+                xmlPath = prevFilePath.split(".")[0] + XML_EXT
+        else:
+            assert False
+        if not os.path.exists(xmlPath): # Not labeled yet
+            self.status("Previous file hasn't been labeled")
+            return
+        tVocParseReader = PascalVocReader(xmlPath)
+        shapesData = tVocParseReader.getShapes()        
+        objects = []
+        shapes = []
+        for label, points, line_color, fill_color, difficult in shapesData:
+            shape = Shape(label=label)
+            xmin, ymin = None, None
+            xmax, ymax = None, None
+            for x, y in points:
+                shape.addPoint(QPointF(x, y))
+                if xmin is None:
+                    xmin, ymin = x, y
+                    xmax, ymax = x, y
+                else:
+                    xmin = min(xmin, x)
+                    xmax = max(xmax, x)
+                    ymin = min(ymin, y)
+                    ymax = max(ymax, y)
+            objects.append((xmin,ymin,xmax-xmin,ymax-ymin))
+            shape.difficult = difficult
+            shape.close()
+            shapes.append(shape)
+            if line_color:
+                shape.line_color = QColor(*line_color)
+            if fill_color:
+                shape.fill_color = QColor(*fill_color)
+
+        # Calculate new shapes
+        if len(shapes) <= 0:
+            self.status("Previous file has no shapes")
+            return
+        if self._autolabel is None:
+            self._autolabel = autolabel.getInstancce()
+        self._autolabel.update(self.filePath, prevFilePath, objects)
+        newobjs = self._autolabel.objects
+        assert len(newobjs)==len(shapes)
+        for i,newobj in enumerate(newobjs):
+            xmin,ymin,xspan,yspan = newobj
+            xmax,ymax = xmin+xspan,ymin+yspan
+            points = [QPointF(xmin,ymin), QPointF(xmax, ymin), QPointF(xmax,ymax), QPointF(xmin,ymax)]
+            shapes[i].points = points
+        self.canvas.shapes = shapes
+        
+        # Reload current file
+        self.saveFile()
+        self.loadFile(self.filePath)
+
     def resizeEvent(self, event):
         if self.canvas and not self.image.isNull()\
            and self.zoomMode != self.MANUAL_ZOOM:
@@ -1021,15 +1107,19 @@ class MainWindow(QMainWindow, WindowMixin):
         s['fill/color'] = self.fillColor
         s['recentFiles'] = self.recentFiles
         s['advanced'] = not self._beginner
+        s['savedir'] = ""
+        s['lastOpenDir'] = ""
+        s['lastSaveDir'] = ""
+        s['lastLabelFile'] = ""
         if self.defaultSaveDir is not None and len(self.defaultSaveDir) > 1:
             s['savedir'] = ustr(self.defaultSaveDir)
-        else:
-            s['savedir'] = ""
-
         if self.lastOpenDir is not None and len(self.lastOpenDir) > 1:
             s['lastOpenDir'] = self.lastOpenDir
-        else:
-            s['lastOpenDir'] = ""
+        if self.lastSaveDir is not None and len(self.lastSaveDir) > 1:
+            s['lastSaveDir'] = self.lastSaveDir
+        if self.lastLabelFile is not None and len(self.lastLabelFile) > 1:
+            s['lastLabelFile'] = self.lastLabelFile
+        s.sync()
 
     ## User Dialogs ##
 
@@ -1051,10 +1141,10 @@ class MainWindow(QMainWindow, WindowMixin):
         return images
 
     def changeSavedir(self, _value=False):
-        if self.defaultSaveDir is not None:
-            path = ustr(self.defaultSaveDir)
+        if self.lastSaveDir is not None:
+            path = self.lastSaveDir
         else:
-            path = '.'
+            path = ustr(self.defaultSaveDir) if self.defaultSaveDir is not None else '.'
 
         dirpath = ustr(QFileDialog.getExistingDirectory(self,
                                                        '%s - 保存到目录' % __appname__, path,  QFileDialog.ShowDirsOnly
@@ -1062,6 +1152,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         if dirpath is not None and len(dirpath) > 1:
             self.defaultSaveDir = dirpath
+            self.lastSaveDir = dirpath
 
         self.statusBar().showMessage('%s . 标注将会保存到 %s' %
                                      ('改变保存目录', self.defaultSaveDir))
@@ -1083,7 +1174,10 @@ class MainWindow(QMainWindow, WindowMixin):
             self.loadPascalXMLByFilename(filename)
     
     def loadClasses(self):
-        path = os.path.dirname(ustr(self.filePath)) if self.filePath else '.'
+        if self.lastLabelFile:
+            path = os.path.dirname(self.lastLabelFile)
+        else:
+            path = os.path.dirname(ustr(self.filePath)) if self.filePath else '.'
         filters = "选择标签文件(%s)" % ' '.join(['*.txt'])
         filename = QFileDialog.getOpenFileName(self,'%s - 设置标签文件' % __appname__, path, filters)
         if filename:
@@ -1091,6 +1185,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 filename = filename[0]
             self.labelHist = []
             self.loadPredefinedClasses(filename)
+            self.lastLabelFile = filename
 
     def openDir(self, _value=False):
         if not self.mayContinue():
@@ -1323,8 +1418,8 @@ class MainWindow(QMainWindow, WindowMixin):
 class Settings(object):
     """Convenience dict-like wrapper around QSettings."""
 
-    def __init__(self, types=None):
-        self.data = QSettings()
+    def __init__(self, types=None, fileName='config_labelImg.ini', format=QSettings.IniFormat):
+        self.data = QSettings(fileName, format)
         self.types = defaultdict(lambda: QVariant, types if types else {})
 
     def __setitem__(self, key, value):
@@ -1336,7 +1431,10 @@ class Settings(object):
         return self._cast(key, self.data.value(key))
 
     def get(self, key, default=None):
-        return self._cast(key, self.data.value(key, default))
+        value = self.data.value(key)
+        if value is None:
+            return default
+        return self._cast(key, value)
 
     def _cast(self, key, value):
         # XXX: Very nasty way of converting types to QVariant methods :P
@@ -1344,6 +1442,9 @@ class Settings(object):
         if t is not None and t != QVariant:
             if t is str:
                 return ustr(value)
+            elif t is bool:
+                assert type(value) is str
+                return (value.lower()=="true")
             else:
                 try:
                     method = getattr(QVariant, re.sub(
@@ -1353,6 +1454,9 @@ class Settings(object):
                     # print(e)
                     return value
         return value
+    
+    def sync(self):
+        self.data.sync()
 
 
 def inverted(color):
